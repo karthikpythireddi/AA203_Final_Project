@@ -282,8 +282,8 @@ dt = 0.1
 params = {'lr': 1.0, 'lf': 1.0, 'dt': dt, 'R': 100.0}
 Q = 1.0e1 * np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
 R = 1.0e1 * np.array([[1, 0], [0, 1]])
-QN = 1.0e1 * np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
-T = 15.0  # simulation time (decreasing makes car understeer)
+QN = 1.0e2 * np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+T = 20.0  # simulation time (decreasing makes car understeer)
 t = np.arange(0.0, T, dt)
 N = t.size - 1
 
@@ -325,15 +325,24 @@ plt.grid(True)
 plt.savefig('trajectory.png')
 plt.show()
 
-# Plot the control trajectory
+# Plot the control trajectories
 plt.figure(figsize=(10, 5))
-plt.plot(delta_f, label='Steering Angle')
-plt.plot(a, label='Acceleration')
+plt.plot(delta_f * 180 / np.pi, label='Steering Angle')
 plt.xlabel('Time Step')
-plt.ylabel('Value')
-plt.title('Control Reference Trajectory from iLQR')
+plt.ylabel('delta_f (degrees)')
+plt.title('Steering Angle Reference Trajectory from iLQR')
 plt.legend()
 plt.grid(True)
-plt.savefig('control_trajectory.png')
+plt.savefig('steering_angle_trajectory.png')
+plt.show()
+
+plt.figure(figsize=(10, 5))
+plt.plot(a, label='Acceleration')
+plt.xlabel('Time Step')
+plt.ylabel('Acceleration (m/s^2)')
+plt.title('Acceleration Reference Trajectory from iLQR')
+plt.legend()
+plt.grid(True)
+plt.savefig('acceleration_trajectory.png')
 plt.show()
 
