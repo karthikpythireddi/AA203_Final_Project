@@ -248,19 +248,19 @@ def ilqr(f, s0, s_ref, Q, R, QN, params, eps=1e-3, max_iter=100):
 
 # Parameters
 params = {'lr': 1.0, 'lf': 1.0, 'dt': dt, 'R': 100.0}
-Q = 1e2 * np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 0]])
-R = np.array([[1, 0], [0, 100]])
-QN = 1e2 * np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 0]])
-T = 10.0  # time to reach end of road
+Q = 1.0e1 * np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+R = 1.0e4 * np.array([[1, 0], [0, 1]])
+QN = 1.0e1 * np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+T = 30.0  # time to reach end of road
 t = np.arange(0.0, T, dt)
 N = t.size - 1
 
 # Initial and final velocities
-v0 = 0 # initial velocity
-v_end = 2 # end velocity
+v0 = 5 # initial velocity
+v_end = 5 # end velocity
 
 # Generate road trajectory with constant radius of curvature, initial heading of 0 and final heading of 90 deg
-s_ref = initialize_trajectory(N, params, np.pi/2, v0, v_end)
+s_ref = initialize_trajectory(N, params, np.pi, v0, v_end)
 s0_car = s_ref[0]
 sgoal_car = s_ref[-1]
 
