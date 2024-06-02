@@ -136,7 +136,7 @@ class TotalCost(NamedTuple):
     
 
 @jax.jit
-def iterative_linear_quadratic_regulator(dynamics, total_cost, x0, u_guess, maxiter=1000, atol=1e-3):
+def iterative_linear_quadratic_regulator(dynamics, total_cost, x0, u_guess, maxiter=5000, atol=1e-3):
     running_cost, terminal_cost = total_cost
     n, (N, m) = x0.shape[-1], u_guess.shape
     step_range = jnp.arange(N)
@@ -280,23 +280,52 @@ def generate_constant_curvature(N, params, final_heading, v0, v_end):
     s_ref[:, 3] = np.linspace(v0, v_end, N)
 
     return s_ref
+
+# Generate S-shaped road trajectory with 2 different radii of curvature and initial heading of 0
+def generate_s_shaped_road(N, params, v0, v_end):
+    s_ref = np.zeros((N, 4))
+    N1 = N // 2
+    N2 = N - N1 + 1
+
+    r1 = params['R'] # First bend curvature
+    theta1 = np.linspace(-np.pi / 2, np.pi / 2, N1)
+    road_x1 = r1 * np.cos(theta1) # road x position
+    road_y1 = r1 * (np.sin(theta1) + 1)  # road y position
+    road_dx1 = -r1 * np.sin(theta1)
+    road_dy1 = r1 * np.cos(theta1)
+    road_psi1 = np.arctan2(road_dy1, road_dx1) # road heading
+
+    r2 = params['R2'] # Second bend curvature
+    theta2 = -np.linspace(np.pi / 2, 3 * np.pi / 2, N2)
+    road_x2 = r2 * np.cos(theta2) # road x position
+    road_y2 = r2 * (np.sin(theta2) + 1) +  2 * r1  # road y position
+    road_dx2 = r2 * np.sin(theta2)
+    road_dy2 = -r2 * np.cos(theta2)
+    road_psi2 = np.arctan2(road_dy2, road_dx2) # road heading
+
+    s_ref[:,0], s_ref[:, 1], s_ref[:, 2] = np.concatenate((road_x1, road_x2[1:])), np.concatenate((road_y1, road_y2[1:])), np.concatenate((road_psi1, road_psi2[1:]))
+    s_ref[:, 3] = np.linspace(v0, v_end, N)
+
+    return s_ref
     
 
 dt = 0.1
-params = {'lr': 1.0, 'lf': 1.0, 'dt': dt, 'R': 100.0}
+params = {'lr': 1.0, 'lf': 1.0, 'dt': dt, 'R': 100.0, 'R2': 100.0}
 Q = 1.0e1 * np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
 R = 1.0e4 * np.array([[1, 0], [0, 1]])
 QN = 1.0e1 * np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
-T = 30.0  # simulation time (decreasing makes car understeer)
+T = 99.0  # simulation time (decreasing makes car understeer)
 t = np.arange(0.0, T, dt)
-N = t.size - 1
+N = t.size -1
 
 # Initial and final velocities
-v0 = 10
-v_end = 10
+v0 = 5
+v_end = 5
 
-s_ref = generate_constant_curvature(N, params, np.pi, v0, v_end)
+#s_ref = generate_constant_curvature(N, params, np.pi/2, v0, v_end) # CONSTANT CURVATURE
+s_ref = generate_s_shaped_road(N, params, v0, v_end) # S-SHAPED ROAD
 s0_car, sgoal_car = s_ref[0], s_ref[-1]
+
 
 u_guess = jnp.zeros((N - 1, 2))
 
@@ -380,7 +409,7 @@ def affinize(f, s, u):
     c = f(s, u) - A @ s - B @ u
     return A, B, c
 
-def scp_iteration(f, s0, u0, s_road, s_prev, u_prev, P, Q, R, C):
+def scp_iteration(f, s0, u0, s_road, s_prev, u_prev, P, Q, R, C, a_max):
     """Solve a single SCP sub-problem for the obstacle avoidance problem."""
     n = s_prev.shape[-1]  # state dimension
     m = u_prev.shape[-1]  # control dimension
@@ -398,6 +427,10 @@ def scp_iteration(f, s0, u0, s_road, s_prev, u_prev, P, Q, R, C):
     constraints += [u_cvx[0] == u0 + du_cvx[0]]
     constraints += [u_cvx[k] == u_cvx[k-1] + du_cvx[k] for k in range(1, N)]
     constraints += [s_cvx[k+1] == Af[k] @ s_cvx[k] + Bf[k] @ u_cvx[k] + cf[k] for k in range(N)]
+    # Acceleration constraints (cannot exceed 3 m/s^2 for comfort)
+    constraints += [u_cvx[:,1] <= a_max]
+    constraints += [u_cvx[:,1] >= -a_max]
+
 
     prob = cvx.Problem(cvx.Minimize(objective), constraints)
     prob.solve(solver=cvx.OSQP)
@@ -422,6 +455,7 @@ def solve_obstacle_avoidance_scp(
     R,
     C,
     eps,
+    a_max,
     max_iters,
     s_init=None,
     u_init=None,
@@ -447,7 +481,7 @@ def solve_obstacle_avoidance_scp(
     J = np.zeros(max_iters + 1)
     J[0] = np.inf
     for i in range(max_iters):
-        s, u, J[i + 1] = scp_iteration(f, s0, u0, s_road, s, u, P, Q, R, C)
+        s, u, J[i + 1] = scp_iteration(f, s0, u0, s_road, s, u, P, Q, R, C, a_max)
         dJ = np.abs(J[i + 1] - J[i])
         if dJ < eps:
             converged = True
@@ -460,8 +494,8 @@ def solve_obstacle_avoidance_scp(
 f = bicycle_model
 C = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 0]])
 
-N_mpc = 5 # MPC horizon
-N_scp = 5  # maximum number of SCP iterations
+N_mpc = 10 # MPC horizon
+N_scp = 2  # maximum number of SCP iterations
 
 
 # Define constants
@@ -472,14 +506,17 @@ u_mpc = np.zeros((N, N_mpc, m))
 s = np.copy(s0_car)
 total_time = time()
 total_control_cost = 0.0
-s_init = s_iLQR[0:N_mpc+1]
-u_init = u_iLQR[0:N_mpc]
+s_init = np.copy(s_iLQR[0:N_mpc+1])
+u_init = np.copy(u_iLQR[0:N_mpc])
 u = u_init[0]
+
 P = 1e2 * np.eye(n)  # terminal state cost matrix
 Q = 1e1 * np.eye(n)  # state cost matrix
 R = 1e-2 * np.eye(m)  # control cost matrix
 eps = 1e-3  # SCP convergence tolerance
-
+tol = 1e-3 # MPC goal convergence tolerance
+a_max = 3; # max acceleration constraint
+t = 0
 for t in tqdm(range(N)):
     # Solve the MPC problem at time `t`
     s_road = np.zeros((N_mpc + 1, n))
@@ -489,7 +526,7 @@ for t in tqdm(range(N)):
          s_road[N_mpc + 1 - num_greater: N_mpc + 1] = s_ref[-1]
     else: s_road = s_ref[t:t+N_mpc+1]
 
-    s_mpc[t], u_mpc[t] = solve_obstacle_avoidance_scp(f, s, u, s_road, N_mpc, P, Q, R, C, eps, N_scp, s_init, u_init)
+    s_mpc[t], u_mpc[t] = solve_obstacle_avoidance_scp(f, s, u, s_road, N_mpc, P, Q, R, C, eps, a_max, N_scp, s_init, u_init)
 
     u = u_mpc[t, 0, :]
     s = f(s, u)
@@ -503,7 +540,9 @@ for t in tqdm(range(N)):
     s_init = np.concatenate(
         [s_mpc[t, 1:], f(s_mpc[t, -1], u_mpc[t, -1]).reshape([1, -1])]
     )
-
+    # End if car is resonably near goal state
+    if (np.linalg.norm(C @ (s - sgoal_car), np.inf) < tol):
+        break
 total_time = time() - total_time
 print("Total elapsed time:", total_time, "seconds")
 print("Total control cost:", total_control_cost)
@@ -512,19 +551,19 @@ print("Total control cost:", total_control_cost)
 #fig.suptitle("$N = {}$, ".format(N_mpc) + r"$N_\mathrm{SCP} = " + "{}$".format(N_scp))
 
 plt.figure(figsize=(10, 5))
-for t in range(N):
-    plt.plot(s_mpc[t, :, 0], s_mpc[t, :, 1], "--*", color="k")
-plt.plot(s_mpc[:, 0, 0], s_mpc[:, 0, 1], "-o", label='Generated Trajectory')
 plt.plot(s_ref[:,0], s_ref[:,1], 'r--', label='Reference Road')
+#for i in range(N):
+    #plt.plot(s_mpc[i, :, 0], s_mpc[i, :, 1], "--*", color="k")
+plt.plot(s_mpc[:t, 0, 0], s_mpc[:t, 0, 1], "-", label='Generated Trajectory')
 plt.xlabel(r"$x(t)$")
 plt.ylabel(r"$y(t)$")
-plt.axis("equal")
+#plt.axis("equal")
 plt.grid(True)
 plt.legend()
 plt.savefig("mpc_trajectory.png")
 
 plt.figure(figsize=(10, 5))
-plt.plot(u_mpc[:, 0, 0] * 180 / np.pi, "-o", label=r"$delta_f(t)$")
+plt.plot(u_mpc[:t, 0, 0] * 180 / np.pi, "-o", label=r"$delta_f(t)$")
 plt.xlabel(r"$t$")
 plt.ylabel(r"Steering Angle (deg)")
 plt.grid(True)
@@ -532,7 +571,7 @@ plt.savefig("mpc_steering_angle_trajectory.png")
 
 
 plt.figure(figsize=(10, 5))
-plt.plot(u_mpc[:, 0, 1], "-o", label=r"$a(t)$")
+plt.plot(u_mpc[:t, 0, 1], "-o", label=r"$a(t)$")
 plt.xlabel(r"$t$")
 plt.ylabel(r"$Acceleration (m/s^2)$")
 plt.grid(True)
